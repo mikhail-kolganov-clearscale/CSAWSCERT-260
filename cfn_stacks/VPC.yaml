@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: VPC Creation with two public subnets
+  
+Parameters:
+  VPCCidr:
+    Default: 10.0.0.0/24
+    Type: String
+    Description: Specify the VPC CIDR block according
+    # AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([1[6-9]|2[0-8]))?$
+
+  Environment:
+    Default: test
+    Type: String
+    Description: Enter the Environment name
+
+  Company:
+    Default: CSAWSCERT-260
+    Type: String
+    Description: Enter the Company name
+
+  AvailabilityZonesList:
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+    Description: Specify TWO availability zones
+
+  
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: "default"
+      Tags:
+        - Key: Name
+          Value: !Sub
+          - ${ENV}-${COMP}-${RESOURCE}
+          - ENV:  !Ref Environment
+            COMP: !Ref Company
+            RESOURCE: 'VPC' 
+
+  IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub
+          - ${ENV}-${COMP}-${RESOURCE}
+          - ENV:  !Ref Environment
+            COMP: !Ref Company
+            RESOURCE: 'IGW'
+
+  IGWtoVPCattachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref IGW
+      VpcId: !Ref VPC
+
+  DefRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub
+          - ${ENV}-${COMP}-${RESOURCE}
+          - ENV:  !Ref Environment
+            COMP: !Ref Company
+            RESOURCE: 'RouteTable'
+      VpcId: !Ref VPC
+
+
+  Subnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !Ref AvailabilityZonesList]
+      CidrBlock: !Select [ 0, !Cidr [ !GetAtt VPC.CidrBlock, 2, 4 ] ]
+      Tags:
+        - Key: Name
+          Value: !Sub
+          - ${ENV}-${COMP}-${RESOURCE}-${AZ}
+          - ENV:  !Ref Environment
+            COMP: !Ref Company
+            RESOURCE: 'Subnet1'
+            AZ: !Select [0, !Ref AvailabilityZonesList]
+      VpcId: !Ref VPC
+
+  Subnet1DefRTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref DefRouteTable
+      SubnetId: !Ref Subnet1
+
+  Subnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !Ref AvailabilityZonesList]
+      CidrBlock: !Select [ 1, !Cidr [ !GetAtt VPC.CidrBlock, 2, 4 ] ]
+      Tags:
+        - Key: Name
+          Value: !Sub
+          - ${ENV}-${COMP}-${RESOURCE}-${AZ}
+          - ENV:  !Ref Environment
+            COMP: !Ref Company
+            RESOURCE: 'Subnet2'
+            AZ: !Select [1, !Ref AvailabilityZonesList]
+      VpcId: !Ref VPC
+
+  Subnet2DefRTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref DefRouteTable
+      SubnetId: !Ref Subnet2
+
+  LogicalID:
+    Type: AWS::EC2::Route
+    Properties:
+      GatewayId: !Ref IGW
+      RouteTableId: !Ref DefRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+
+Outputs:
+
+  OutVpc:
+    Value: !Ref VPC
+    Export:
+      Name: kolganovEcsVPC
+
+  OutSubnet1:
+    Value: !Ref Subnet1
+    Export:
+      Name: kolganovEcsSubnet01
+
+  OutSubnet2:
+    Value: !Ref Subnet2
+    Export:
+      Name: kolganovEcsSubnet02
