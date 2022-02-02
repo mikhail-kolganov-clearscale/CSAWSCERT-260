@@ -68,19 +68,33 @@ Resources:
             RESOURCE: 'RouteTable'
       VpcId: !Ref VPC
 
-
-  Subnet1:
+  PrivateSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
       AvailabilityZone: !Select [0, !Ref AvailabilityZonesList]
-      CidrBlock: !Select [ 0, !Cidr [ !GetAtt VPC.CidrBlock, 2, 4 ] ]
+      CidrBlock: !Select [ 0, !Cidr [ !GetAtt VPC.CidrBlock, 4, 5 ] ]
       Tags:
         - Key: Name
           Value: !Sub
           - ${ENV}-${COMP}-${RESOURCE}-${AZ}
           - ENV:  !Ref Environment
             COMP: !Ref Company
-            RESOURCE: 'Subnet1'
+            RESOURCE: 'PrivateSubnet1'
+            AZ: !Select [0, !Ref AvailabilityZonesList]
+      VpcId: !Ref VPC
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !Ref AvailabilityZonesList]
+      CidrBlock: !Select [ 1, !Cidr [ !GetAtt VPC.CidrBlock, 4, 5 ] ]
+      Tags:
+        - Key: Name
+          Value: !Sub
+          - ${ENV}-${COMP}-${RESOURCE}-${AZ}
+          - ENV:  !Ref Environment
+            COMP: !Ref Company
+            RESOURCE: 'PublicSubnet1'
             AZ: !Select [0, !Ref AvailabilityZonesList]
       VpcId: !Ref VPC
 
@@ -88,28 +102,45 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref DefRouteTable
-      SubnetId: !Ref Subnet1
+      SubnetId: !Ref PublicSubnet1
 
-  Subnet2:
+  PrivateSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       AvailabilityZone: !Select [1, !Ref AvailabilityZonesList]
-      CidrBlock: !Select [ 1, !Cidr [ !GetAtt VPC.CidrBlock, 2, 4 ] ]
+      CidrBlock: !Select [ 2, !Cidr [ !GetAtt VPC.CidrBlock, 4, 5 ] ]
       Tags:
         - Key: Name
           Value: !Sub
           - ${ENV}-${COMP}-${RESOURCE}-${AZ}
           - ENV:  !Ref Environment
             COMP: !Ref Company
-            RESOURCE: 'Subnet2'
+            RESOURCE: 'PrivateSubnet2'
+            AZ: !Select [0, !Ref AvailabilityZonesList]
+      VpcId: !Ref VPC
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !Ref AvailabilityZonesList]
+      CidrBlock: !Select [ 3, !Cidr [ !GetAtt VPC.CidrBlock, 4, 5 ] ]
+      Tags:
+        - Key: Name
+          Value: !Sub
+          - ${ENV}-${COMP}-${RESOURCE}-${AZ}
+          - ENV:  !Ref Environment
+            COMP: !Ref Company
+            RESOURCE: 'PublicSubnet2'
             AZ: !Select [1, !Ref AvailabilityZonesList]
       VpcId: !Ref VPC
+
+
 
   Subnet2DefRTAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref DefRouteTable
-      SubnetId: !Ref Subnet2
+      SubnetId: !Ref PublicSubnet2
 
   LogicalID:
     Type: AWS::EC2::Route
@@ -125,12 +156,22 @@ Outputs:
     Export:
       Name: kolganovEcsVPC
 
-  OutSubnet1:
-    Value: !Ref Subnet1
+  OutPrivateSubnet1:
+    Value: !Ref PrivateSubnet1
     Export:
       Name: kolganovEcsSubnet01
 
-  OutSubnet2:
-    Value: !Ref Subnet2
+  OutPrivateSubnet2:
+    Value: !Ref PrivateSubnet2
     Export:
       Name: kolganovEcsSubnet02
+
+  OutPublicSubnet1:
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: kolganovAlbSubnet01
+
+  OutPublicSubnet2:
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: kolganovAlbSubnet02

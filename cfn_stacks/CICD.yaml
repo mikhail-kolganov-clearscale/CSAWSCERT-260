@@ -21,45 +21,91 @@ Parameters:
   
 Resources:
 
+  #S3 Bucket for storing Artifacts for CodePipeline and CodeBuild
   CodePipelineArtifactStoreBucket:
     Type: 'AWS::S3::Bucket'
 
 
-  CodePipelineArtifactStoreBucketPolicy:
-    Type: 'AWS::S3::BucketPolicy'
+# Lambda role for cleaning S3 bucket
+  ClearS3BucketLambdaFunctionRole:
+    Type: AWS::IAM::Role
     Properties:
-      Bucket: !Ref CodePipelineArtifactStoreBucket
-      PolicyDocument:
-        Version: 2012-10-17
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
         Statement:
-          - Sid: DenyUnEncryptedObjectUploads
-            Effect: Deny
-            Principal: '*'
-            Action: 's3:PutObject'
-            Resource: !Join 
-              - ''
-              - - !GetAtt 
-                  - CodePipelineArtifactStoreBucket
-                  - Arn
-                - /*
-            Condition:
-              StringNotEquals:
-                's3:x-amz-server-side-encryption': 'aws:kms'
-          - Sid: DenyInsecureConnections
-            Effect: Deny
-            Principal: '*'
-            Action: 's3:*'
-            Resource: !Join 
-              - ''
-              - - !GetAtt 
-                  - CodePipelineArtifactStoreBucket
-                  - Arn
-                - /*
-            Condition:
-              Bool:
-                'aws:SecureTransport': false
+        - Effect: Allow
+          Principal:
+            Service:
+              - lambda.amazonaws.com
+          Action:
+            - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: LambdaFunctionPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+              - "logs:*"
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - "s3:*"
+            Resource:
+              - !Sub "${CodePipelineArtifactStoreBucket.Arn}"
+              - !Sub "${CodePipelineArtifactStoreBucket.Arn}/*"
 
 
+  ClearS3BucketLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.6
+      Timeout: 5
+      Handler: index.handler
+      Role: !GetAtt ClearS3BucketLambdaFunctionRole.Arn
+      Code:
+        ZipFile: |
+              import json
+              import boto3
+              from botocore.vendored import requests
+              import cfnresponse
+
+              def handler(event, context):
+                  responseData = {}
+                  
+                  if 'PhysicalResourceId' in event :
+                    ResourceId = event['PhysicalResourceId']
+                  else:
+                    ResourceId = 'ClearS3BucketLambdaFunction'
+
+                  if event['RequestType'] == 'Create':
+                    cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, ResourceId)
+
+                  try:
+                      bucket = event['ResourceProperties']['BucketName']
+
+                      if event['RequestType'] == 'Delete':
+                          s3 = boto3.resource('s3')
+                          bucket = s3.Bucket(bucket)
+                          for obj in bucket.objects.filter():
+                              s3.Object(bucket.name, obj.key).delete()
+
+                      #responseData['Data'] = str("Cleaning S3 bucket {bkt}").format(bkt=bucket)
+
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, ResourceId)
+                  except Exception as e:
+                      print(e)
+                      cfnresponse.send(event, context, cfnresponse.FAILED, responseData, ResourceId)   
+
+# Custom action for cleaning the S3 bucket
+  cleanupS3BucketOnDelete:
+    Type: Custom::cleanupbucket
+    Properties:
+      ServiceToken: !GetAtt ClearS3BucketLambdaFunction.Arn
+      BucketName: !Ref CodePipelineArtifactStoreBucket
+
+#EventBridge config for tracking changes of CodeCommit repo
   AmazonCloudWatchEventRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -105,7 +151,7 @@ Resources:
               - ':'
               - !Ref 'AWS::AccountId'
               - ':'
-              - !Ref RepositoryName
+              - !Ref RepositoryName   # Here we specify the CodeCommit repo name (via the InputParameter)
         detail:
           event:
             - referenceCreated
@@ -129,7 +175,7 @@ Resources:
           Id: codepipeline-AppPipeline
 
 
-
+#CodePipeline with three stages: Source, Build, Depoloy
   myPipeline:
     Type: 'AWS::CodePipeline::Pipeline'
     Properties:

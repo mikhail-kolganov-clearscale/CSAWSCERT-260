@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Kolganov - test CI/CD (CodePipeline/CodeBuild) CSAWSCERT-260
+# Base AWS tutorial: https://docs.aws.amazon.com/codepipeline/latest/userguide/tutorials-cloudformation-codecommit.html
+
+
+  
+Resources:
+
+  #S3 Bucket for storing Artifacts for CodePipeline and CodeBuild
+  CodePipelineArtifactStoreBucket:
+    Type: 'AWS::S3::Bucket'
+
+
+# Lambda role for cleaning S3 bucket
+  ClearS3BucketLambdaFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+              - lambda.amazonaws.com
+          Action:
+            - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: LambdaFunctionPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+              - "logs:*"
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - "s3:*"
+            Resource:
+              - !Sub "${CodePipelineArtifactStoreBucket.Arn}"
+              - !Sub "${CodePipelineArtifactStoreBucket.Arn}/*"
+
+
+  ClearS3BucketLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.6
+      Timeout: 5
+      Handler: index.handler
+      Role: !GetAtt ClearS3BucketLambdaFunctionRole.Arn
+      Code:
+        ZipFile: |
+              import json
+              import boto3
+              from botocore.vendored import requests
+              import cfnresponse
+
+              def handler(event, context):
+                  responseData = {}
+                  
+                  if 'PhysicalResourceId' in event :
+                    ResourceId = event['PhysicalResourceId']
+                  else:
+                    ResourceId = 'ClearS3BucketLambdaFunction'
+
+                  if event['RequestType'] == 'Create':
+                    cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, ResourceId)
+
+                  try:
+                      bucket = event['ResourceProperties']['BucketName']
+
+                      if event['RequestType'] == 'Delete':
+                          s3 = boto3.resource('s3')
+                          bucket = s3.Bucket(bucket)
+                          for obj in bucket.objects.filter():
+                              s3.Object(bucket.name, obj.key).delete()
+
+                      #responseData['Data'] = str("Cleaning S3 bucket {bkt}").format(bkt=bucket)
+
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, ResourceId)
+                  except Exception as e:
+                      print(e)
+                      cfnresponse.send(event, context, cfnresponse.FAILED, responseData, ResourceId)   
+
+# Custom action for cleaning the S3 bucket
+  cleanupS3BucketOnDelete:
+    Type: Custom::cleanupbucket
+    Properties:
+      ServiceToken: !GetAtt ClearS3BucketLambdaFunction.Arn
+      BucketName: !Ref CodePipelineArtifactStoreBucket
