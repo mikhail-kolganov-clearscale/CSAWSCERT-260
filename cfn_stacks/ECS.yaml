@@ -11,6 +11,16 @@ Parameters:
     Default: my-test-http-python
     Description: The name of the ECS Container within the ECS Task
 
+  ContainerPort:
+    Type: Number
+    Default: 8080
+    Description: TCP port on which the ECS container will be listenning
+
+  AllowedSrcIP:
+    Type: String
+    Default: 52.8.5.26/32
+    Description: Source IP from where connections are allowed to the ECS container
+
 Resources:
 
   ECScluster:
@@ -38,9 +48,9 @@ Resources:
     Properties:
       GroupId: !Ref EcsSecurityGroup
       IpProtocol: tcp
-      FromPort: 8080
-      ToPort: 8080
-      CidrIp: 52.8.5.26/32
+      FromPort: !Ref ContainerPort
+      ToPort: !Ref ContainerPort
+      CidrIp: !Ref AllowedSrcIP
 
   EcsTaskRole:
     Type: 'AWS::IAM::Role'
