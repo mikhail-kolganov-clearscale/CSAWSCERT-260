@@ -249,6 +249,7 @@ Resources:
   EcsLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
+      RetentionInDays: 1
       LogGroupName: !Sub "ECS-Log-${AWS::StackName}"
 
   HelloWorldTaskDef:
