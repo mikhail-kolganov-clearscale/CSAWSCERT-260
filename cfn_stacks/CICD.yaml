@@ -9,15 +9,20 @@ Parameters:
   #   Description: Specify the prefix name for CodePipeline and CodeBuild resouirces
   #   Default: kolganov-csawscert-260
 
-  BranchName:
+  CodeCommitRepositoryName:
+    Description: CodeComit repository name
+    Type: String
+    Default: kolganov-CSAWSCERT-260
+
+  CodeCommitBranchName:
     Description: CodeCommit branch name
     Type: String
     Default: master
 
-  RepositoryName:
-    Description: CodeComit repository name
+  CodeBuildComputeType:
     Type: String
-    Default: kolganov-CSAWSCERT-260
+    Default: BUILD_GENERAL1_SMALL
+    Description: Compute instance type for the CodeBuild Project
   
 Resources:
 
@@ -151,7 +156,7 @@ Resources:
               - ':'
               - !Ref 'AWS::AccountId'
               - ':'
-              - !Ref RepositoryName   # Here we specify the CodeCommit repo name (via the InputParameter)
+              - !Ref CodeCommitRepositoryName   # Here we specify the CodeCommit repo name (via the InputParameter)
         detail:
           event:
             - referenceCreated
@@ -194,8 +199,8 @@ Resources:
               OutputArtifacts:
                 - Name: SourceArtifact
               Configuration:
-                BranchName: !Ref BranchName
-                RepositoryName: !Ref RepositoryName
+                BranchName: !Ref CodeCommitBranchName
+                RepositoryName: !Ref CodeCommitRepositoryName
                 PollForSourceChanges: false
               RunOrder: 1
 
@@ -258,7 +263,7 @@ Resources:
             Action: 'sts:AssumeRole'
       Path: /
       Policies:
-        - PolicyName: AWS-CodePipeline-Service-3
+        - PolicyName: AWS-CodePipeline-ServiceRole
           PolicyDocument:
             Version: 2012-10-17
             Statement:
@@ -272,12 +277,10 @@ Resources:
                 Resource: '*'
               - Effect: Allow
                 Action:
-                  - 'codedeploy:CreateDeployment'
-                  - 'codedeploy:GetApplicationRevision'
-                  - 'codedeploy:GetDeployment'
-                  - 'codedeploy:GetDeploymentConfig'
-                  - 'codedeploy:RegisterApplicationRevision'
-                Resource: '*'
+                  - "s3:*"
+                Resource:
+                  - !Sub "${CodePipelineArtifactStoreBucket.Arn}"
+                  - !Sub "${CodePipelineArtifactStoreBucket.Arn}/*"
               - Effect: Allow
                 Action:
                   - 'codebuild:BatchGetBuilds'
@@ -285,36 +288,46 @@ Resources:
                 Resource: '*'
               - Effect: Allow
                 Action:
-                  - 'devicefarm:ListProjects'
-                  - 'devicefarm:ListDevicePools'
-                  - 'devicefarm:GetRun'
-                  - 'devicefarm:GetUpload'
-                  - 'devicefarm:CreateUpload'
-                  - 'devicefarm:ScheduleRun'
-                Resource: '*'
-              - Effect: Allow
-                Action:
-                  - 'lambda:InvokeFunction'
-                  - 'lambda:ListFunctions'
-                Resource: '*'
-              - Effect: Allow
-                Action:
                   - 'iam:PassRole'
                 Resource: '*'
               - Effect: Allow
                 Action:
-                  - 'elasticbeanstalk:*'
-                  - 'ec2:*'
-                  - 'elasticloadbalancing:*'
-                  - 'autoscaling:*'
-                  - 'cloudwatch:*'
-                  - 's3:*'
-                  - 'sns:*'
-                  - 'cloudformation:*'
-                  - 'rds:*'
-                  - 'sqs:*'
-                  - 'ecs:*'
+                  - 'ecs:List*'
+                  - 'ecs:Describe*'
+                  - 'ecs:Tag*'
+                  - 'ecs:Untag*'
+                  - 'ecs:RegisterTaskDefinition'    #100% needed
+                  - 'ecs:DeregisterTaskDefinition'
                 Resource: '*'
+              - Effect: Allow
+                Action:
+                - "ecs:*"
+                Resource:
+                  - Fn::Sub:
+                    - "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-set/${EcsClusterName}/*/*"
+                    - EcsClusterName: !ImportValue kolganovEcsClusterName
+
+                  - Fn::Sub:
+                    - "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${EcsClusterName}"
+                    - EcsClusterName: !ImportValue kolganovEcsClusterName
+
+                  - Fn::Sub:
+                    - "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task/${EcsClusterName}/*"
+                    - EcsClusterName: !ImportValue kolganovEcsClusterName
+
+                  - Fn::Sub:
+                    - "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:service/${EcsClusterName}/${ServiceName}"
+                    - EcsClusterName: !ImportValue kolganovEcsClusterName
+                      ServiceName: !ImportValue kolganovEcsServiceName
+
+                  - Fn::Sub:
+                    - "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:container-instance/${EcsClusterName}/*"
+                    - EcsClusterName: !ImportValue kolganovEcsClusterName
+
+                  - Fn::Sub: 
+                    - "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:${TaskDefNameRef}:*"
+                    - TaskDefNameRef: !Select [ 5, !Split [":", !ImportValue kolganovEcsTaskDefName ]]
+
   
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
@@ -324,7 +337,7 @@ Resources:
         Type: CODEPIPELINE
       Environment:
         Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_SMALL
+        ComputeType: !Ref CodeBuildComputeType #BUILD_GENERAL1_SMALL
         Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
         #EnvironmentVariables: '[{"name":"DOCKERHUB_USERNAME","value":"test-kolganov-dockerhub:username","type":"SECRETS_MANAGER"},{"name":"DOCKERHUB_PASSWORD","value":"test-kolganov-dockerhub:password","type":"SECRETS_MANAGER"}]'
 

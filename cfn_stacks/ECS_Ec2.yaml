@@ -1,0 +1,409 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Test ECS cluster for CSAWSCERT-260
+  
+Parameters:
+  EcsClusterName:
+    Type: String
+    Default: kolganov-cfn-ECS-CSAWSCERT-260
+
+  ContainerName:
+    Type: String
+    Default: my-test-http-python
+    Description: The name of the ECS Container within the ECS Task
+
+  ContainerPort:
+    Type: Number
+    Default: 8080
+    Description: TCP port on which the ECS container will be listenning
+
+  AllowedSrcIP:
+    Type: String
+    Default: 52.8.5.26/32
+    Description: Source IP from where connections are allowed to the ECS container
+
+  ECSAsgMaxSize:
+    Type: Number
+    Default: 3
+    Description: Maximal size of the ECS AutoScaling Group
+
+  ECSAsgDesiredCapacity:
+    Type: Number
+    Default: 1
+    Description: Desired size of the ECS AutoScaling Group
+
+  ECSAMI:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux/recommended/image_id
+    Description: The Amazon Machine Image ID used for the cluster, leave it as the default value to get the latest AMI
+
+  InstanceType:
+    Type: String
+    Default: t3.small
+    Description: Class of EC2 instance used to host containers
+    AllowedValues: [ t3.micro, t3.small, t3.medium ]
+    ConstraintDescription: Please choose a valid instance type.
+
+  ContainerCpu:
+    Type: Number
+    Default: 100
+    Description: How much CPU to give the container. 1024 is 1 CPU
+
+  ContainerMemory:
+    Type: Number
+    Default: 128
+    Description: How much memory in megabytes to give the container
+
+  EcsHelloWorldServiceDesiredCount:
+    Type: Number
+    Default: 1
+    Description: Amount of Container Tasks within the HelloWorld ECS Service
+
+  AlbPort:
+    Type: Number
+    Default: 80
+    Description: TCP port on which the ECS container will be listenning
+
+Resources:
+
+  ECScluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      # CapacityProviders:
+      #   - FARGATE_SPOT
+      #   - FARGATE
+      ClusterName: !Ref EcsClusterName
+      Tags:
+      - Key: "CreatedBy"
+        Value: "Mikhail.Kolganov"
+
+  EcsSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Kolganov ECS Security Group for CSAWSCERT-260
+      VpcId: !ImportValue kolganovEcsVPC
+
+  # Allow Inbound access from the ALB
+  EcsSecurityGroupAlbSgInbound:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !Ref EcsSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref ContainerPort
+      ToPort: !Ref ContainerPort
+      # CidrIp: !Ref AllowedSrcIP
+      SourceSecurityGroupId: !Ref AlbSecurityGroup
+
+  EcsSecurityGroupSSHinbound:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !Ref EcsSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref AllowedSrcIP
+
+
+  EcsTaskRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: ecs-service
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                - 'ec2:AttachNetworkInterface'
+                - 'ec2:CreateNetworkInterface'
+                - 'ec2:CreateNetworkInterfacePermission'
+                - 'ec2:DeleteNetworkInterface'
+                - 'ec2:DeleteNetworkInterfacePermission'
+                - 'ec2:Describe*'
+                - 'ec2:DetachNetworkInterface'
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+                - "ecr:GetAuthorizationToken"
+                - "ecr:BatchCheckLayerAvailability"
+                - "ecr:GetDownloadUrlForLayer"
+                - "ecr:BatchGetImage"
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                - 'elasticloadbalancing:DeregisterInstancesFromLoadBalancer'
+                - 'elasticloadbalancing:DeregisterTargets'
+                - 'elasticloadbalancing:Describe*'
+                - 'elasticloadbalancing:RegisterInstancesWithLoadBalancer'
+                - 'elasticloadbalancing:RegisterTargets'
+                Resource:
+                - !Ref ALB
+
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ec2.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+      - PolicyName: ecs-service
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+              - 'ecs:CreateCluster'
+              - 'ecs:DeregisterContainerInstance'
+              - 'ecs:DiscoverPollEndpoint'
+              - 'ecs:Poll'
+              - 'ecs:RegisterContainerInstance'
+              - 'ecs:StartTelemetrySession'
+              - 'ecs:Submit*'
+              - 'logs:CreateLogStream'
+              - 'logs:PutLogEvents'
+              - 'ecr:GetAuthorizationToken'
+              - 'ecr:BatchGetImage'
+              - 'ecr:GetDownloadUrlForLayer'
+              - 'ecr:GetAuthorizationToken'
+              - 'ecr:BatchCheckLayerAvailability'
+            Resource: '*'
+
+  ECSAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !ImportValue kolganovEcsSubnet01
+        - !ImportValue kolganovEcsSubnet02
+      LaunchConfigurationName: !Ref 'EcsInstances'
+      MinSize: '1'
+      MaxSize: !Ref 'ECSAsgMaxSize'
+      DesiredCapacity: !Ref 'ECSAsgDesiredCapacity'
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: true
+
+  EcsInstances:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref 'ECSAMI'
+      SecurityGroups:
+      - !Ref EcsSecurityGroup
+      InstanceType: !Ref 'InstanceType'
+      IamInstanceProfile: !Ref 'EC2InstanceProfile'
+      KeyName: "kolganov-keypair"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          echo ECS_CLUSTER=${ECScluster} >> /etc/ecs/ecs.config
+          echo ECS_AVAILABLE_LOGGING_DRIVERS='["json-file","awslogs","none"]' >> /etc/ecs/ecs.config
+          yum install -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ECSAutoScalingGroup --region ${AWS::Region}
+  
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles: [!Ref 'EC2Role']
+
+  ECSCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+        AutoScalingGroupProvider:
+            AutoScalingGroupArn: !Ref  ECSAutoScalingGroup
+            #arn:aws:autoscaling:us-west-2:123456789012:autoScalingGroup:a1b2c3d4-5678-90ab-cdef-EXAMPLE11111:autoScalingGroupName/MyAutoScalingGroup
+            # ManagedScaling:
+            #     MaximumScalingStepSize: 10
+            #     MinimumScalingStepSize: 1
+            #     Status: ENABLED
+            #     TargetCapacity: 100
+            # ManagedTerminationProtection: ENABLED
+        Tags:
+        - Key: "CreatedBy"
+          Value: "Mikhail.Kolganov"
+
+  ClusterCPAssociation:
+    Type: "AWS::ECS::ClusterCapacityProviderAssociations"
+    Properties:
+      Cluster: !Ref ECScluster
+      CapacityProviders:
+        - !Ref ECSCapacityProvider
+      DefaultCapacityProviderStrategy:
+        - Base: 1
+          Weight: 1
+          CapacityProvider: !Ref ECSCapacityProvider
+
+  # A log group for storing the stdout logs from this service's containers
+  EcsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "ECS-Log-${AWS::StackName}"
+
+  HelloWorldTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - ClusterCPAssociation
+    Properties:
+      RequiresCompatibilities:
+      - "EC2"
+      #- "FARGATE"
+      NetworkMode: awsvpc
+
+      ## Only for Fargate!!!!
+      # RuntimePlatform:
+      #   OperatingSystemFamily: LINUX
+      #   CpuArchitecture: X86_64
+
+      ## Hereit is optional, better to specify directly inside the ContainerDefinition
+      # Cpu: !Ref ContainerCpu #256
+      # Memory: !Ref ContainerMemory  #512
+      ExecutionRoleArn: !GetAtt EcsTaskRole.Arn
+      ContainerDefinitions:
+        # -
+        #   Name: "test-hello-world"
+        #   Cpu: 256
+        #   Memory: 512
+        #   Image: "tutum/hello-world"
+        - Name: !Ref ContainerName    #"my-test-http-python"
+          Image: 992536150469.dkr.ecr.us-east-1.amazonaws.com/kolganov-csawscert-260:latest
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+          Cpu: !Ref ContainerCpu #256
+          Memory: !Ref ContainerMemory  #512
+          ## Your Amazon ECS container instances also require logs:CreateLogStream and logs:PutLogEvents permission on the IAM role with which you launch your container instances
+          ## Also we have to add `ECS_AVAILABLE_LOGGING_DRIVERS='["json-file","awslogs"]' >> /etc/ecs/ecs.config` in the Cloud-Init script
+          LogConfiguration:
+            LogDriver: 'awslogs'
+            Options:
+              awslogs-group: !Ref EcsLogGroup
+              awslogs-region: !Ref 'AWS::Region'
+              awslogs-stream-prefix: 'HelloWorldService'
+
+
+  HelloWorldService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ECScluster
+      TaskDefinition: !Ref HelloWorldTaskDef
+      DesiredCount: !Ref EcsHelloWorldServiceDesiredCount
+      # LaunchType: "FARGATE"
+      # CapacityProviderStrategy: 
+      # - CapacityProvider: "FARGATE_SPOT"
+      #   Weight: 1
+      
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          # AssignPublicIp: ENABLED
+          Subnets:
+          - !ImportValue kolganovEcsSubnet01
+          - !ImportValue kolganovEcsSubnet02
+          SecurityGroups: 
+          - !Ref EcsSecurityGroup
+      LoadBalancers:
+        - ContainerName: !Ref   ContainerName
+          ContainerPort: !Ref   ContainerPort
+          TargetGroupArn: !Ref  MyTargetGroup
+
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: "ipv4"
+
+      Scheme: "internet-facing"
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Subnets:
+        - !ImportValue kolganovAlbSubnet01
+        - !ImportValue kolganovAlbSubnet02
+      Tags:
+      - Key: "CreatedBy"
+        Value: "Mikhail.Kolganov"
+      Type: application
+
+  AlbSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Kolganov - ALB Security Group for CSAWSCERT-260
+      VpcId: !ImportValue kolganovEcsVPC
+
+
+  AlbSecurityGroupHTTPinbound:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !Ref AlbSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref AlbPort
+      ToPort: !Ref AlbPort
+      CidrIp: !Ref AllowedSrcIP
+
+  MyTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 6
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      # Name: !Ref 'ServiceName'
+      Port: !Ref   ContainerPort
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      VpcId: !ImportValue kolganovEcsVPC
+      TargetType: ip
+      Tags:
+      - Key: "CreatedBy"
+        Value: "Mikhail.Kolganov"
+
+  MyHTTPlistener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      DefaultActions:
+        - Type: "forward"
+          TargetGroupArn: !Ref MyTargetGroup
+      Port: !Ref AlbPort
+      Protocol: "HTTP"
+
+
+
+
+Outputs:
+
+  OutTaskDefName:
+    Value: !Ref ContainerName
+    Export:
+      Name: kolganovEcsContainerName
+
+  OutEcsClusterName:
+    Value: !Ref ECScluster
+    Export:
+      Name: kolganovEcsClusterName
+
+
+  OutHelloWorldTaskDefName:
+    Value: !Ref HelloWorldTaskDef
+    Export:
+      Name: kolganovEcsTaskDefName
+      
+
+  OutHelloWorldServiceName:
+    Value: !GetAtt HelloWorldService.Name
+    Export:
+      Name: kolganovEcsServiceName
+
+  OutAlbUrl:
+    Value: !GetAtt  ALB.DNSName
+
